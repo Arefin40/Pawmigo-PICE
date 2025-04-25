@@ -1,0 +1,18 @@
+==== RFID ====
+🆓 SDA = D8
+✅ SCK = D5
+✅ MISO = D6
+✅ MOSI = D7
+✅ IRQ = Not connected
+🆓 RST = D3
+✅ GND = GND
+✅ 3.3V = 3.3V
+
+== Servo ==
+🆓 Signal = D2
+✅ GND = GND
+✅ 5V = External 5V
+
+== Buzzer ==
+🆓 Positive = D1
+✅ GND = GND
