@@ -38,7 +38,6 @@ unsigned long servoStartTime = 0;
 unsigned long portionStartTime = 0;
 int portionsDispensed = 0;
 bool isFeeding = false;
-String scannedRFID = "";
 
 // Beep patterns
 const int PATTERN_SUCCESS[] = {100, 100, 300};
@@ -280,37 +279,34 @@ void processQueue()
    }
 }
 
-String checkIfRFIDIsPresent()
+void checkRFID()
 {
-   scannedRFID = "";
-
    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial())
    {
+      // Get scanned RFID
+      String scannedRFID = "";
       for (byte i = 0; i < mfrc522.uid.size; i++)
       {
          if (mfrc522.uid.uidByte[i] < 0x10)
             scannedRFID += "0";
          scannedRFID += String(mfrc522.uid.uidByte[i], HEX);
       }
+
+      // Check if scanned RFID matches the queue RFID
       scannedRFID.toUpperCase();
-   }
-   return scannedRFID;
-}
-
-void checkRFID()
-{
-   scannedRFID = checkIfRFIDIsPresent();
-
-   if (scannedRFID == rfid)
-   {
-   }
-   else
-   {
-      time_t now = time(nullptr);
-      if (now < feedTime || now > feedTime + timeoutWindow)
+      if (scannedRFID == rfid)
       {
-         String body = createActivityRequestBody("rfid_scan", scannedRFID);
-         useMutation(body);
+         beepInPattern(PATTERN_SUCCESS, 3);
+         currentState = FEED_PET;
+      }
+      else
+      {
+         time_t now = time(nullptr);
+         if (now < feedTime || now > feedTime + timeoutWindow)
+         {
+            String body = createActivityRequestBody("rfid_scan", scannedRFID);
+            useMutation(body);
+         }
       }
    }
 }
@@ -343,17 +339,95 @@ void loop()
 {
    currentTime = millis();
 
-   // Check if WiFi is connected
    if (WiFi.status() != WL_CONNECTED)
    {
       connectToWiFi();
    }
 
-   // Check if RFID is present
-   checkRFID();
+   // Manage non-blocking servo operation
+   if (isFeeding)
+   {
+      if (currentTime - servoStartTime >= 500 && feederServo.read() == 180)
+      {
+         feederServo.write(0); // Close after 0.5 sec
+      }
 
-   // Check if queue is present
-   fetchQueue();
+      // Wait between portion cycles
+      if (currentTime - portionStartTime >= portionInterval)
+      {
+         portionsDispensed++;
+         if (portionsDispensed >= portion)
+         {
+            // Done feeding
+            feederServo.detach();
+            isFeeding = false;
+            markQueuedFeedingAsCompleted(queueId);
+            resetState();
+            currentState = FETCH_QUEUE;
+         }
+         else
+         {
+            feederServo.write(180); // Open again
+            servoStartTime = millis();
+            portionStartTime = millis();
+         }
+      }
+   }
 
-   delay(1000);
+   if (!isFeeding)
+   {
+      // Fetch queue every 10 minutes
+      if (currentTime - lastQueueFetchTime >= queueFetchInterval)
+      {
+         fetchQueue();
+         lastQueueFetchTime = currentTime;
+      }
+
+      switch (currentState)
+      {
+      case INIT:
+         currentState = FETCH_QUEUE;
+         break;
+
+      case FETCH_QUEUE:
+         Serial.println("Transitioning to FETCH_QUEUE");
+         fetchQueue();
+         break;
+
+      case PROCESS_QUEUE:
+         Serial.println("Transitioning to PROCESS_QUEUE");
+         processQueue();
+         break;
+
+      case WAIT_FOR_RFID:
+         Serial.println("Transitioning to WAIT_FOR_RFID");
+         checkRFID();
+
+         // Fallback: no RFID scanned within timeout window
+         if (millis() - rfidWaitStart >= timeoutWindow * 1000)
+         {
+            Serial.println("RFID timeout reached, skipping feeding.");
+            skipFeeding(rfid);
+         }
+         break;
+
+      case FEED_PET:
+         Serial.println("Transitioning to FEED_PET");
+         feedPet();
+         break;
+
+      case ERROR:
+         Serial.println("Transitioning to ERROR");
+         beepInPattern(PATTERN_ERROR, 5);
+         sendActivityLog("error");
+         currentState = FETCH_QUEUE;
+         break;
+
+      case IDLE:
+      default:
+         Serial.println("Transitioning to IDLE");
+         delay(1000);
+         break;
+      }
+   }
 }
