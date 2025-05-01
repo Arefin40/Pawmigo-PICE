@@ -13,6 +13,9 @@
 #define SERVO_PIN D2
 #define RST_PIN D3
 #define SS_PIN D8
+#define LED_BUILTIN 2
+#define ON LOW
+#define OFF HIGH
 
 // Network credentials
 const char SSID[] PROGMEM = "Nahida akter";
@@ -101,6 +104,10 @@ void setup()
 {
    Serial.begin(115200);
 
+   // Initialize the LED
+   pinMode(LED_BUILTIN, OUTPUT);
+   setLedTo(OFF);
+
    // Initialize modules
    pinMode(BUZZER_PIN, OUTPUT);
    digitalWrite(BUZZER_PIN, LOW);
@@ -137,6 +144,7 @@ void setup()
       Serial.println("Warning: Continuing without time sync");
    }
 
+   logDeviceActivity("connection");
    Serial.println("System initialized");
    fetchQueue();
 }
@@ -205,8 +213,10 @@ void beep(int times)
    for (int i = 0; i < times; i++)
    {
       digitalWrite(BUZZER_PIN, HIGH);
+      setLedTo(ON);
       delay(100);
       digitalWrite(BUZZER_PIN, LOW);
+      setLedTo(OFF);
       delay(100);
    }
 }
@@ -216,10 +226,29 @@ void beepInPattern(const int *pattern, int length)
    for (int i = 0; i < length; i++)
    {
       digitalWrite(BUZZER_PIN, HIGH);
+      setLedTo(ON);
       delay(pattern[i]);
       digitalWrite(BUZZER_PIN, LOW);
+      setLedTo(OFF);
       delay(100);
    }
+}
+
+void setLedTo(bool state)
+{
+   digitalWrite(LED_BUILTIN, state);
+}
+
+void blink(int times, int pause = 60)
+{
+   for (int i = 0; i < times; i++)
+   {
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(pause);
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(pause);
+   }
+   digitalWrite(LED_BUILTIN, HIGH);
 }
 
 bool syncNTPTime()
@@ -296,11 +325,13 @@ void dispenseFood()
       servoAttached = true;
    }
 
+   setLedTo(ON);
    feederServo.write(0);
    delay(1000);
    feederServo.write(180);
    delay(queue.portion * servoTimeUnit);
    feederServo.write(0);
+   setLedTo(OFF);
 }
 
 void handleFeeding()
@@ -353,17 +384,17 @@ void logDeviceActivity(const String &activityType)
    Serial.println("Logging device activity: " + activityType);
    return sendPostRequest("activities:logDeviceActivity", [&](JsonObject &args)
                           {
-    args["activityType"] = activityType;
-    args["timestamp"] = timeClient.getEpochTime(); });
+      args["activityType"] = activityType;
+      args["timestamp"] = timeClient.getEpochTime(); });
 }
 
 void logPetActivity(const String &activityType)
 {
    return sendPostRequest("activities:logPetActivity", [&](JsonObject &args)
                           {
-    args["rfid"] = queue.rfid;
-    args["activityType"] = activityType;
-    args["timestamp"] = timeClient.getEpochTime(); });
+      args["rfid"] = queue.rfid;
+      args["activityType"] = activityType;
+      args["timestamp"] = timeClient.getEpochTime(); });
 }
 
 void skipFeeding()
@@ -443,6 +474,7 @@ void fetchQueue()
 
    if (httpCode == HTTP_CODE_OK)
    {
+      blink(3);
       Serial.println("Fetch queue success.");
       lastQueueFetchTime = millis();
       String payload = http.getString();
