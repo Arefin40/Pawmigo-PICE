@@ -15,8 +15,8 @@
 #define SS_PIN D8
 
 // Network credentials
-const char SSID[] PROGMEM = "UAP";
-const char PASSWORD[] PROGMEM = "abcelp@uap";
+const char SSID[] PROGMEM = "Nahida akter";
+const char PASSWORD[] PROGMEM = "@1019290852";
 const char API_URL[] = "https://avid-cuttlefish-149.convex.cloud/api";
 
 // Initialize modules
@@ -31,6 +31,7 @@ std::unique_ptr<BearSSL::WiFiClientSecure> secureClient(new BearSSL::WiFiClientS
 const int PATTERN_SUCCESS[] = {100, 100, 300};
 const int PATTERN_SKIPPED[] = {100, 500, 100};
 const int PATTERN_ERROR[] = {400, 100, 100, 100, 400};
+const int PATTERN_WRONG_PET[] = {400};
 
 // Feeding queue structure
 struct FeedingQueue
@@ -63,7 +64,6 @@ struct FeedingQueue
 
    bool shouldFeedNow() const
    {
-      Serial.println("feedTime: " + String(feedTime) + "; CurrentTime: " + String(timeClient.getEpochTime()));
       if (isEmpty())
          return false;
       return feedTime > 0 && timeClient.getEpochTime() >= feedTime;
@@ -88,8 +88,9 @@ unsigned long lastFeedTimeCheck = 0;
 unsigned long lastQueueFetchTime = 0;
 unsigned long feedingStartWaitTime = 0;
 
-// Intervals
-const int servoTimeUnit = 100;                              // 100ms
+// Time constants
+const int servoTimeUnit = 400;                              // 300ms
+const int servoDetachTimeOut = 5 * 1000;                    // 5s
 const unsigned long rfidCheckInterval = 200;                // 200ms
 const unsigned long feedTimeCheckInterval = 10 * 1000;      // 10s
 const unsigned long timeSyncCheckInterval = 60 * 60 * 1000; // 1hour
@@ -159,7 +160,6 @@ void loop()
    // Check RFID periodically
    if (millis() - lastRFIDCheck > rfidCheckInterval)
    {
-      // Serial.println("Checking RFID");
       checkRFID();
       lastRFIDCheck = millis();
    }
@@ -167,8 +167,6 @@ void loop()
    // Check feeding time periodically
    if (millis() - lastFeedTimeCheck > feedTimeCheckInterval)
    {
-      Serial.println("Checking feeding time");
-      Serial.println("Should feed: " + String(queue.shouldFeedNow()) + "; Wait For State: " + waitingForPet);
       if (queue.shouldFeedNow() && !waitingForPet)
       {
          waitingForPet = true;
@@ -188,7 +186,7 @@ void loop()
    }
 
    // Detach servo if its not used
-   if (millis() - lastFeedTime > 60 * 100 && servoAttached)
+   if (millis() - lastFeedTime > servoDetachTimeOut && servoAttached)
    {
       Serial.println("Detaching Servo");
       feederServo.detach();
@@ -267,6 +265,7 @@ void checkRFID()
    scannedRFID = readRFID();
    if (scannedRFID == "")
       return;
+
    Serial.println("RFID: " + scannedRFID);
 
    if (waitingForPet)
@@ -279,6 +278,7 @@ void checkRFID()
       else
       {
          Serial.println("Wrong pet detected!");
+         beepInPattern(PATTERN_WRONG_PET, 1);
          sendPostRequest("activities:logPetActivity", [&](JsonObject &args)
                          {
         args["rfid"] = scannedRFID;
@@ -290,13 +290,14 @@ void checkRFID()
 
 void dispenseFood()
 {
-   Serial.println("Dispansing food");
    if (!servoAttached)
    {
       feederServo.attach(SERVO_PIN);
       servoAttached = true;
    }
 
+   feederServo.write(0);
+   delay(1000);
    feederServo.write(180);
    delay(queue.portion * servoTimeUnit);
    feederServo.write(0);
@@ -304,10 +305,9 @@ void dispenseFood()
 
 void handleFeeding()
 {
-   Serial.println("Handling feed");
    dispenseFood();
+   lastFeedTime = millis();
    markQueuedFeedingAsCompleted();
-   logPetActivity(queue.isManual ? "manual_feeding" : "scheduled_feeding");
    queue.clear();
 }
 
@@ -384,21 +384,16 @@ void markQueuedFeedingAsCompleted()
 
 bool parseQueuePayload(String &payload)
 {
-   Serial.println("Parsing queue");
-   Serial.println(payload);
    DynamicJsonDocument responseDoc(512);
    DeserializationError error = deserializeJson(responseDoc, payload);
    bool success = false;
 
    if (!error)
    {
-      // Serial.println("No error while parsing queue");
       JsonObject item = responseDoc["value"];
 
       if (!item.isNull())
       {
-         Serial.println("Item exits");
-         // Safely extract each field with checks
          queue.id = item["_id"].as<String>();
          queue.rfid = item["rfid"].as<String>();
          queue.beep = item["beep"].as<int>();
@@ -423,7 +418,7 @@ bool parseQueuePayload(String &payload)
 
 void fetchQueue()
 {
-   Serial.println("Fetching queue");
+   Serial.print("Fetching queue: ");
 
    if (WiFi.status() != WL_CONNECTED)
    {
@@ -448,7 +443,7 @@ void fetchQueue()
 
    if (httpCode == HTTP_CODE_OK)
    {
-      Serial.println("Fetch queue success");
+      Serial.println("Fetch queue success.");
       lastQueueFetchTime = millis();
       String payload = http.getString();
       parseQueuePayload(payload);
