@@ -308,11 +308,7 @@ void checkRFID()
       {
          Serial.println("Wrong pet detected!");
          beepInPattern(PATTERN_WRONG_PET, 1);
-         sendPostRequest("activities:logPetActivity", [&](JsonObject &args)
-                         {
-        args["rfid"] = scannedRFID;
-        args["activityType"] = "rfid_scan";
-        args["timestamp"] = timeClient.getEpochTime(); });
+         logWrongRFIDDetected(scannedRFID);
       }
    }
 }
@@ -345,13 +341,13 @@ void handleFeeding()
 // ===============================================
 
 template <typename ArgBuilder>
-void sendPostRequest(const String &path, ArgBuilder &&argBuilder)
+void sendPostRequest(const String &path, ArgBuilder &&argBuilder, const String &requestType = "mutation")
 {
    if (WiFi.status() == WL_CONNECTED)
    {
       secureClient->setInsecure();
 
-      http.begin(*secureClient, String(API_URL) + "/mutation");
+      http.begin(*secureClient, String(API_URL) + "/" + requestType);
       http.addHeader("Content-Type", "application/json");
 
       DynamicJsonDocument doc(256);
@@ -397,6 +393,14 @@ void logPetActivity(const String &activityType)
       args["timestamp"] = timeClient.getEpochTime(); });
 }
 
+void logWrongRFIDDetected(const String &scannedRFID)
+{
+   return sendPostRequest("activities:WrongRFIDDetected", [&](JsonObject &args)
+                          {
+      args["rfid"] = scannedRFID;
+      args["timestamp"] = timeClient.getEpochTime(); }, "action");
+}
+
 void skipFeeding()
 {
    if (queue.isEmpty())
@@ -434,7 +438,7 @@ bool parseQueuePayload(String &payload)
       }
       else
       {
-         Serial.println("No items in queue");
+         Serial.println("No incomplete feeding in queue");
       }
 
       success = true;
